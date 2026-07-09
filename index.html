@@ -149,6 +149,14 @@
         }
         button.submit-btn:hover { background: var(--gold-hover); }
 
+        .visit-store-btn {
+            display: flex; align-items: center; justify-content: center; gap: 10px;
+            background: none; border: 1px solid var(--gold); color: var(--gold);
+            text-decoration: none; padding: 12px; border-radius: 6px; font-weight: bold;
+            margin-bottom: 25px; transition: 0.3s;
+        }
+        .visit-store-btn:hover { background: var(--gold); color: #000; }
+
         /* الجداول المرنة للموبايل */
         .table-wrapper {
             overflow-x: auto;
@@ -187,6 +195,10 @@
     <!-- المحتوى الرئيسي للوحة الإدارة -->
     <div id="admin-content">
         <h1>لوحة إدارة متجر شلبي الاحترافية</h1>
+
+        <a href="https://mosha-spec.github.io/SHALABY_STORE/#" target="_blank" class="visit-store-btn">
+            <i>🛍️</i> فتح المتجر
+        </a>
 
         <!-- العدادات والتحليلات الذكية -->
         <div class="analytics-grid">
@@ -255,9 +267,15 @@
                         <option value="out">نفذت الكمية</option>
                     </select>
                 </div>
-                <div class="form-group">
-                    <label>رابط الصورة الرئيسية للمنتج *</label>
-                    <input type="text" id="p-img" required placeholder="ضع رابط الصورة هنا">
+                <div class="form-group full-width">
+                    <label>صورة المنتج الرئيسية *</label>
+                    <div class="upload-box" id="img-upload-box" onclick="document.getElementById('p-img-file').click()">
+                        <img id="img-preview" src="" alt="" style="display:none; max-width:130px; max-height:130px; border-radius:6px; margin-bottom:10px; object-fit:cover;">
+                        <div id="upload-placeholder">📷 اضغط هنا لاختيار صورة من جهازك</div>
+                        <div id="upload-status" style="margin-top:8px; font-size:0.8rem; color:var(--gold);"></div>
+                    </div>
+                    <input type="file" id="p-img-file" accept="image/*" style="display:none" onchange="handleImageSelect(event)">
+                    <input type="hidden" id="p-img">
                 </div>
                 <div class="form-group full-width">
                     <label>وصف وتفاصيل المنتج الفاخر *</label>
@@ -340,6 +358,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getFirestore, collection, addDoc, onSnapshot, doc, deleteDoc, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js";
 
         // الكونفيج الخاص بـ شلبي ستور
         const firebaseConfig = {
@@ -353,6 +372,7 @@
 
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
+        const storage = getStorage(app);
 
         // دالة حماية لتفادي كسر الجدول أو ثغرات XSS من بيانات المنتج
         function escapeHtml(str) {
@@ -446,9 +466,60 @@
             });
         }
 
+        // 2. رفع صورة المنتج مباشرة لـ Firebase Storage بمجرد اختيارها من الجهاز
+        let isUploadingImage = false;
+        window.handleImageSelect = async function(e) {
+            const file = e.target.files[0];
+            if(!file) return;
+
+            const preview = document.getElementById('img-preview');
+            const placeholder = document.getElementById('upload-placeholder');
+            const status = document.getElementById('upload-status');
+
+            // عرض معاينة فورية للصورة المختارة
+            preview.src = URL.createObjectURL(file);
+            preview.style.display = 'block';
+            placeholder.style.display = 'none';
+            status.innerText = 'جاري رفع الصورة... ⏳';
+            isUploadingImage = true;
+
+            try {
+                const fileName = `products/${Date.now()}_${file.name}`;
+                const storageRef = ref(storage, fileName);
+                await uploadBytes(storageRef, file);
+                const url = await getDownloadURL(storageRef);
+                document.getElementById('p-img').value = url;
+                status.innerText = 'تم رفع الصورة بنجاح ✅';
+            } catch(err) {
+                status.innerText = 'فشل رفع الصورة، حاول مرة أخرى ❌';
+                document.getElementById('p-img').value = '';
+            } finally {
+                isUploadingImage = false;
+            }
+        };
+
+        function resetImageUpload() {
+            document.getElementById('p-img').value = '';
+            document.getElementById('p-img-file').value = '';
+            document.getElementById('img-preview').src = '';
+            document.getElementById('img-preview').style.display = 'none';
+            document.getElementById('upload-placeholder').style.display = 'block';
+            document.getElementById('upload-status').innerText = '';
+        }
+
         // 2. معالجة إرسال وحفظ حقول الفورم بالكامل (إضافة وتعديل)
         window.handleProductSubmit = async function(e) {
             e.preventDefault();
+
+            if(isUploadingImage) {
+                alert("الصورة لسه بترفع، برجاء الانتظار لحظة قبل الحفظ.");
+                return;
+            }
+            if(!document.getElementById('p-img').value) {
+                alert("من فضلك اختر صورة للمنتج أولاً.");
+                return;
+            }
+
             const id = document.getElementById('product-edit-id').value;
             
             const productData = {
@@ -489,8 +560,18 @@
             document.getElementById('p-category').value = p.category || '';
             document.getElementById('p-stock').value = p.stock || 0;
             document.getElementById('p-status').value = p.status || 'available';
-            document.getElementById('p-img').value = p.img || '';
             document.getElementById('p-desc').value = p.desc || '';
+
+            document.getElementById('p-img').value = p.img || '';
+            const preview = document.getElementById('img-preview');
+            if(p.img) {
+                preview.src = p.img;
+                preview.style.display = 'block';
+                document.getElementById('upload-placeholder').style.display = 'none';
+                document.getElementById('upload-status').innerText = 'الصورة الحالية للمنتج (اضغط لتغييرها)';
+            } else {
+                resetImageUpload();
+            }
 
             document.getElementById('form-title').innerText = "تعديل المنتج الحالي ✏️";
             document.getElementById('p-submit-btn').innerText = "حفظ التغييرات الحالية فوراً";
@@ -613,6 +694,7 @@
         function resetForm() {
             document.getElementById('product-form').reset();
             document.getElementById('product-edit-id').value = '';
+            resetImageUpload();
             document.getElementById('form-title').innerText = "إضافة منتج حقيقي جديد للمتجر";
             document.getElementById('p-submit-btn').innerText = "نشر المنتج في كتالوج المتجر فوراً";
         }
