@@ -237,6 +237,11 @@
                         <option value="boys_acc">اكسسوارات شباب</option>
                         <option value="gifts">بوكسات هدايا</option>
                         <option value="perfumes">عطور فاخرة</option>
+                        <option value="makeup">ميك أب</option>
+                        <option value="detergents">منظفات</option>
+                        <option value="kids">مستلزمات الأطفال</option>
+                        <option value="skincare_girls">عناية بالبشرة بنات</option>
+                        <option value="skincare_boys">عناية بالبشرة شباب</option>
                     </select>
                 </div>
                 <div class="form-group">
@@ -297,26 +302,13 @@
                             <th>رقم التليفون</th>
                             <th>العنوان الحقيقي</th>
                             <th>المنتجات المطلوبة</th>
+                            <th>الإجمالي</th>
                             <th>حالة الطلب الحالي</th>
                         </tr>
                     </thead>
                     <tbody id="orders-table-body">
-                        <!-- بيانات تجريبية تحاكي الفايربيز الفعلي للمتجر -->
-                        <tr>
-                            <td>#SH-4820</td>
-                            <td>أحمد محمد السيد</td>
-                            <td>01023456789</td>
-                            <td>مصر، القاهرة، مدينة نصر</td>
-                            <td>ساعة كلاسيك (1)، عطر ملكي (2)</td>
-                            <td>
-                                <select onchange="alert('تم تحديث حالة الطلب بنجاح!')" style="padding: 5px; font-size: 0.8rem;">
-                                    <option value="new">جديد 🆕</option>
-                                    <option value="process">جاري التجهيز ⏳</option>
-                                    <option value="shipped">تم الشحن 🚚</option>
-                                    <option value="delivered">تم التسليم ✅</option>
-                                </select>
-                            </td>
-                        </tr>
+                        <!-- تُملأ تلقائياً وحياً من قاعدة بيانات الطلبات الحقيقية -->
+                        <tr><td colspan="6" style="color:var(--gray);">جاري تحميل الطلبات...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -336,13 +328,8 @@
                         </tr>
                     </thead>
                     <tbody id="customers-table-body">
-                        <!-- تظهر هنا بيانات العملاء المتفاعلين مع المتجر -->
-                        <tr>
-                            <td>أحمد محمد السيد</td>
-                            <td>01023456789</td>
-                            <td>5 طلبات</td>
-                            <td><span class="badge badge-success">عميل ذهبي ممتاز</span></td>
-                        </tr>
+                        <!-- تظهر هنا بيانات العملاء المتفاعلين مع المتجر حياً -->
+                        <tr><td colspan="4" style="color:var(--gray);">جاري تحميل بيانات العملاء...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -367,6 +354,20 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
+        // دالة حماية لتفادي كسر الجدول أو ثغرات XSS من بيانات المنتج
+        function escapeHtml(str) {
+            if(str === undefined || str === null) return '';
+            return String(str)
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", '&#39;');
+        }
+
+        // تخزين مؤقت لبيانات المنتجات لاستخدامها عند فتح فورم التعديل (بدلاً من حقنها بالكامل داخل onclick)
+        let productsCache = {};
+
         // 1. نظام الحماية بالـ PIN Code (الرمز الافتراضي هنا هو 2026)
         const ADMIN_PIN = "2026"; 
         window.verifyAdminPin = function() {
@@ -374,23 +375,23 @@
             if(input === ADMIN_PIN) {
                 document.getElementById('auth-overlay').style.display = 'none';
                 document.getElementById('admin-content').style.display = 'block';
-                // تفعيل عداد الزيارات البسيط بـ localStorage لحين ربط الـ GA4 بالكامل
-                setupLocalAnalytics();
+                loadLiveAnalytics();
                 loadInventoryData();
+                loadOrdersData();
+                loadCustomersData();
             } else {
                 alert("رمز الأمان غير صحيح! لا يمكن الدخول.");
                 document.getElementById('pin-input').value = '';
             }
         };
 
-        // 8. العداد المحاكي للتحليلات الحقيقية
-        function setupLocalAnalytics() {
-            let currentViews = localStorage.getItem('store_views') || 10;
-            currentViews = parseInt(currentViews) + 1; // زيادة تلقائية مع كل دخول للأدمن كمحاكاة
-            localStorage.setItem('store_views', currentViews);
-            document.getElementById('total-views-stat').innerText = currentViews;
-            document.getElementById('total-orders-stat').innerText = "1";
-            document.getElementById('top-customer-stat').innerText = "أحمد محمد (5 طلبات)";
+        // 8. تحليلات حية ومتصلة فعلياً بقاعدة البيانات (بدل المحاكاة السابقة)
+        function loadLiveAnalytics() {
+            // عدد الزيارات الحقيقي المسجل من صفحة المتجر
+            onSnapshot(doc(db, "analytics", "store_stats"), (snap) => {
+                const data = snap.data();
+                document.getElementById('total-views-stat').innerText = data && data.totalViews ? data.totalViews : 0;
+            });
         }
 
         // سحب وعرض المنتجات حياً من الفايربيز مع تفعيل الفحص الذكي للمخزون
@@ -400,10 +401,18 @@
             onSnapshot(collection(db, "products"), (snapshot) => {
                 tbody.innerHTML = '';
                 let lowStockCount = 0;
+                productsCache = {};
+
+                if(snapshot.empty) {
+                    tbody.innerHTML = `<tr><td colspan="7" style="color:var(--gray);">لا توجد منتجات مضافة بعد.</td></tr>`;
+                    document.getElementById('low-stock-stat').innerText = 0;
+                    return;
+                }
 
                 snapshot.forEach((docSnap) => {
                     const p = docSnap.data();
                     const id = docSnap.id;
+                    productsCache[id] = p;
 
                     // 7. حساب المنتجات ناقصة المخزون أقل من 5 قطع ديناميكياً من الداتا الحقيقية
                     if(parseInt(p.stock) <= 5) {
@@ -412,9 +421,9 @@
 
                     const tr = document.createElement('tr');
                     tr.innerHTML = `
-                        <td>${p.sku || 'N/A'}</td>
-                        <td><img src="${p.img}" style="width:40px; height:40px; object-fit:cover; border-radius:4px;"></td>
-                        <td>${p.name}</td>
+                        <td>${escapeHtml(p.sku) || 'N/A'}</td>
+                        <td><img src="${escapeHtml(p.img)}" style="width:40px; height:40px; object-fit:cover; border-radius:4px;"></td>
+                        <td>${escapeHtml(p.name)}</td>
                         <td style="color:var(--gold); font-weight:bold;">${p.price} ج.م</td>
                         <td class="${p.stock <= 5 ? 'badge-danger' : ''}">${p.stock} قطع</td>
                         <td>
@@ -424,8 +433,8 @@
                         </td>
                         <td>
                             <div class="btn-group">
-                                <button class="action-btn btn-edit" onclick="setupEditForm('${id}', '${p.name}', '${p.sku}', ${p.price}, '${p.oldPrice || ''}', '${p.category}', ${p.stock}, '${p.status}', '${p.img}', '${p.desc || ''}')">تعديل</button>
-                                <button class="action-btn btn-hide" onclick="toggleVisibility('${id}', '${p.status}')">إخفاء</button>
+                                <button class="action-btn btn-edit" onclick="setupEditForm('${id}')">تعديل</button>
+                                <button class="action-btn btn-hide" onclick="toggleVisibility('${id}', '${p.status}')">${p.status === 'out' ? 'إظهار' : 'إخفاء'}</button>
                                 <button class="action-btn btn-delete" onclick="deleteProduct('${id}')">حذف</button>
                             </div>
                         </td>
@@ -468,17 +477,20 @@
         };
 
         // تحضير الفورم للتعديل عند الضغط على زر التعديل في الجدول
-window.setupEditForm = function(id, name, sku, price, oldPrice, category, stock, status, img, desc) {
+        window.setupEditForm = function(id) {
+            const p = productsCache[id];
+            if(!p) return;
+
             document.getElementById('product-edit-id').value = id;
-            document.getElementById('p-name').value = name;
-            document.getElementById('p-sku').value = sku;
-            document.getElementById('p-price').value = price;
-            document.getElementById('p-old-price').value = oldPrice;
-            document.getElementById('p-category').value = category;
-            document.getElementById('p-stock').value = stock;
-            document.getElementById('p-status').value = status;
-            document.getElementById('p-img').value = img;
-            document.getElementById('p-desc').value = desc;
+            document.getElementById('p-name').value = p.name || '';
+            document.getElementById('p-sku').value = p.sku || '';
+            document.getElementById('p-price').value = p.price || 0;
+            document.getElementById('p-old-price').value = p.oldPrice || '';
+            document.getElementById('p-category').value = p.category || '';
+            document.getElementById('p-stock').value = p.stock || 0;
+            document.getElementById('p-status').value = p.status || 'available';
+            document.getElementById('p-img').value = p.img || '';
+            document.getElementById('p-desc').value = p.desc || '';
 
             document.getElementById('form-title').innerText = "تعديل المنتج الحالي ✏️";
             document.getElementById('p-submit-btn').innerText = "حفظ التغييرات الحالية فوراً";
@@ -498,6 +510,105 @@ window.setupEditForm = function(id, name, sku, price, oldPrice, category, stock,
                 await deleteDoc(doc(db, "products", id));
             }
         };
+
+        // حالات الطلب المتاحة
+        const ORDER_STATUSES = {
+            pending: 'جديد 🆕',
+            process: 'جاري التجهيز ⏳',
+            shipped: 'تم الشحن 🚚',
+            delivered: 'تم التسليم ✅',
+            cancelled: 'ملغي ❌'
+        };
+
+        // سحب وعرض الطلبات الحقيقية حياً من قاعدة البيانات
+        function loadOrdersData() {
+            const tbody = document.getElementById('orders-table-body');
+
+            onSnapshot(collection(db, "orders"), (snapshot) => {
+                tbody.innerHTML = '';
+                document.getElementById('total-orders-stat').innerText = snapshot.size;
+
+                if(snapshot.empty) {
+                    tbody.innerHTML = `<tr><td colspan="7" style="color:var(--gray);">لا توجد طلبات حتى الآن.</td></tr>`;
+                    return;
+                }
+
+                // ترتيب الطلبات الأحدث أولاً
+                const orders = [];
+                snapshot.forEach(docSnap => orders.push({ id: docSnap.id, ...docSnap.data() }));
+                orders.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+                orders.forEach(o => {
+                    const itemsText = (o.items || []).map(i => `${i.name} (×${i.qty})`).join('، ');
+                    const optionsHtml = Object.entries(ORDER_STATUSES).map(([val, label]) =>
+                        `<option value="${val}" ${o.status === val ? 'selected' : ''}>${label}</option>`
+                    ).join('');
+
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>${escapeHtml(o.id)}</td>
+                        <td>${escapeHtml(o.customerName)}</td>
+                        <td>${escapeHtml(o.phone)}</td>
+                        <td>${escapeHtml(o.governorate)} - ${escapeHtml(o.address)}</td>
+                        <td>${escapeHtml(itemsText)}</td>
+                        <td style="color:var(--gold); font-weight:bold;">${o.total} ج.م</td>
+                        <td>
+                            <select onchange="updateOrderStatus('${o.id}', this.value)" style="padding: 5px; font-size: 0.8rem;">
+                                ${optionsHtml}
+                            </select>
+                        </td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            });
+        }
+
+        // تحديث حالة الطلب فعلياً في قاعدة البيانات
+        window.updateOrderStatus = async function(orderId, newStatus) {
+            try {
+                await updateDoc(doc(db, "orders", orderId), { status: newStatus });
+            } catch(err) {
+                alert("حدث خطأ أثناء تحديث حالة الطلب.");
+            }
+        };
+
+        // سحب وعرض سجل العملاء وترتيبهم حسب عدد الطلبات (الأعلى ولاءً أولاً)
+        function loadCustomersData() {
+            const tbody = document.getElementById('customers-table-body');
+
+            onSnapshot(collection(db, "customers"), (snapshot) => {
+                tbody.innerHTML = '';
+
+                if(snapshot.empty) {
+                    tbody.innerHTML = `<tr><td colspan="4" style="color:var(--gray);">لا يوجد عملاء مسجلين حتى الآن.</td></tr>`;
+                    document.getElementById('top-customer-stat').innerText = '-';
+                    return;
+                }
+
+                const customers = [];
+                snapshot.forEach(docSnap => customers.push(docSnap.data()));
+                customers.sort((a, b) => (b.orderCount || 0) - (a.orderCount || 0));
+
+                customers.forEach(c => {
+                    const count = c.orderCount || 0;
+                    let badgeClass = 'badge-danger', badgeText = 'عميل جديد';
+                    if(count >= 5) { badgeClass = 'badge-success'; badgeText = 'عميل ذهبي ممتاز'; }
+                    else if(count >= 2) { badgeClass = 'badge-success'; badgeText = 'عميل متكرر'; }
+
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>${escapeHtml(c.name)}</td>
+                        <td>${escapeHtml(c.phone)}</td>
+                        <td>${count} طلبات</td>
+                        <td><span class="badge ${badgeClass}">${badgeText}</span></td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+
+                const top = customers[0];
+                document.getElementById('top-customer-stat').innerText = top ? `${top.name} (${top.orderCount || 0} طلبات)` : '-';
+            });
+        }
 
         function resetForm() {
             document.getElementById('product-form').reset();
