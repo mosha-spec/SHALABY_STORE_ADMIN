@@ -491,7 +491,8 @@
                 document.getElementById('p-img').value = url;
                 status.innerText = 'تم رفع الصورة بنجاح ✅';
             } catch(err) {
-                status.innerText = 'فشل رفع الصورة، حاول مرة أخرى ❌';
+                console.error('خطأ رفع الصورة:', err);
+                status.innerText = `فشل رفع الصورة: ${err.code || err.message} ❌`;
                 document.getElementById('p-img').value = '';
             } finally {
                 isUploadingImage = false;
